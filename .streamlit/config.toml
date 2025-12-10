@@ -1,8 +1,8 @@
 [theme]
+# Using Streamlit's built-in light theme as default
+# Users can switch to dark mode via Settings menu (☰ → Settings → Theme)
+base = "light"
 primaryColor = "#4CAF50"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F2F6"
-textColor = "#262730"
 font = "sans serif"
 
 [server]
