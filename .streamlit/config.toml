@@ -1,7 +1,7 @@
 [theme]
-# Using Streamlit's built-in light theme as default
-# Users can switch to dark mode via Settings menu (☰ → Settings → Theme)
-base = "light"
+# Using Streamlit's built-in dark theme as default
+# Users can switch to light mode via Settings menu (☰ → Settings → Theme)
+base = "dark"
 primaryColor = "#4CAF50"
 font = "sans serif"
 
