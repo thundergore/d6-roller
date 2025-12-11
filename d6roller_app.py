@@ -160,6 +160,7 @@ class CombatConfig:
     hit_modifier: int = 0
     hit_reroll_ones: bool = False
     hit_reroll_fails: bool = False
+    hit_crits_2_hits: bool = False  # 6s to hit count as 2 hits
     hit_auto_wound_on_6: bool = False  # 6s to hit auto-wound
     hit_mortal_wounds_on_6: bool = False  # 6s to hit deal mortal wounds
     wound_target: int = 4
@@ -225,6 +226,16 @@ class CombatResolver:
         prob_natural_6 = 1/6
         mortal_wound_damage = 0
         normal_hit_prob = hit_prob
+        crit_bonus_hits = 0  # Extra hits from crits
+
+        # Handle crits as 2 hits (must be processed first)
+        if config.hit_crits_2_hits and not config.hit_mortal_wounds_on_6 and not config.hit_auto_wound_on_6:
+            # Each 6 that hits generates 1 additional hit
+            # Probability of rolling a 6: 1/6
+            # Probability that a 6 hits: always 1 (if target <= 6)
+            if config.hit_target <= 6:
+                crit_bonus_hits = prob_natural_6 * config.num_attacks
+            # These bonus hits go through normal wound/save/ward sequence
 
         if config.hit_mortal_wounds_on_6:
             # 6s deal mortal wounds (skip wound and save)
@@ -286,8 +297,11 @@ class CombatResolver:
         else:
             expected_normal_damage = config.num_attacks * normal_hit_prob * wound_prob * save_fail_prob * ward_fail_prob * damage_per_hit
 
+        # Add bonus damage from crits (these go through normal wound/save/ward)
+        crit_bonus_damage = crit_bonus_hits * wound_prob * save_fail_prob * ward_fail_prob * damage_per_hit
+
         # Total expected damage
-        expected_total = expected_normal_damage + mortal_wound_damage
+        expected_total = expected_normal_damage + crit_bonus_damage + mortal_wound_damage
 
         return round(expected_total, 2)
 
@@ -320,9 +334,14 @@ class CombatResolver:
         auto_wound_count = 0
         normal_hits = hit_roll.num_successes
 
-        if (config.hit_auto_wound_on_6 or config.hit_mortal_wounds_on_6) and len(hit_roll.successes) > 0:
+        if len(hit_roll.successes) > 0:
             # Count natural 6s among successful hits
             natural_6s_that_hit = np.sum(hit_roll.successes == 6)
+
+            # Handle crits as 2 hits (must be processed first)
+            if config.hit_crits_2_hits:
+                # Each 6 generates an additional hit
+                normal_hits += natural_6s_that_hit
 
             if config.hit_mortal_wounds_on_6:
                 # Mortal wounds: skip wound and save, just apply damage
@@ -597,6 +616,11 @@ class DiceRollerApp:
         ttk.Checkbutton(config_frame, text="Reroll all fails", variable=self.hit_reroll_fails).grid(row=row, column=2, columnspan=3, sticky=tk.W, pady=2)
 
         row += 1
+        self.hit_crits_2_hits = tk.BooleanVar()
+        ttk.Checkbutton(config_frame, text="6s to hit = 2 hits (crits)",
+                       variable=self.hit_crits_2_hits).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=2)
+
+        row += 1
         self.hit_auto_wound_on_6 = tk.BooleanVar()
         ttk.Checkbutton(config_frame, text="6s auto-wound (skip wound roll)",
                        variable=self.hit_auto_wound_on_6,
@@ -793,6 +817,7 @@ class DiceRollerApp:
                 hit_modifier=int(self.hit_modifier.get()),
                 hit_reroll_ones=self.hit_reroll_ones.get(),
                 hit_reroll_fails=self.hit_reroll_fails.get(),
+                hit_crits_2_hits=self.hit_crits_2_hits.get(),
                 hit_auto_wound_on_6=self.hit_auto_wound_on_6.get(),
                 hit_mortal_wounds_on_6=self.hit_mortal_wounds_on_6.get(),
                 wound_target=int(self.wound_target.get()),
@@ -841,6 +866,8 @@ class DiceRollerApp:
             text.insert(tk.END, "  Reroll 1s enabled\n")
         if config.hit_reroll_fails:
             text.insert(tk.END, "  Reroll all fails enabled\n")
+        if config.hit_crits_2_hits:
+            text.insert(tk.END, "  6s to hit count as 2 hits (crits)\n")
         if config.hit_auto_wound_on_6:
             text.insert(tk.END, "  6s to hit auto-wound (skip wound roll)\n")
         if config.hit_mortal_wounds_on_6:
@@ -848,7 +875,7 @@ class DiceRollerApp:
 
         text.insert(tk.END, f"  Rolled {len(result.hit_roll.dice)} dice\n")
         if len(result.hit_roll.dice) <= 30:
-            text.insert(tk.END, f"  Rolls: {list(result.hit_roll.dice)}\n")
+            text.insert(tk.END, f"  Rolls: {result.hit_roll.dice.tolist()}\n")
         text.insert(tk.END, f"  Successes: {result.hit_roll.num_successes}\n")
         text.insert(tk.END, f"  Failures: {result.hit_roll.num_failures}\n")
         if result.hit_roll.rerolled_indices:
@@ -868,7 +895,7 @@ class DiceRollerApp:
 
         text.insert(tk.END, f"  Rolled {len(result.wound_roll.dice)} dice (from successful hits)\n")
         if len(result.wound_roll.dice) <= 30 and len(result.wound_roll.dice) > 0:
-            text.insert(tk.END, f"  Rolls: {list(result.wound_roll.dice)}\n")
+            text.insert(tk.END, f"  Rolls: {result.wound_roll.dice.tolist()}\n")
         text.insert(tk.END, f"  Successes: {result.wound_roll.num_successes}\n")
         text.insert(tk.END, f"  Failures: {result.wound_roll.num_failures}\n")
         if result.wound_roll.rerolled_indices:
@@ -883,7 +910,7 @@ class DiceRollerApp:
 
         text.insert(tk.END, f"  Rolled {len(result.save_roll.dice)} dice (wounds to save)\n")
         if len(result.save_roll.dice) <= 30 and len(result.save_roll.dice) > 0:
-            text.insert(tk.END, f"  Rolls: {list(result.save_roll.dice)}\n")
+            text.insert(tk.END, f"  Rolls: {result.save_roll.dice.tolist()}\n")
         text.insert(tk.END, f"  Successful Saves: {result.save_roll.num_successes}\n")
         text.insert(tk.END, f"  Failed Saves: {result.save_roll.num_failures}\n")
         text.insert(tk.END, "\n")
@@ -893,7 +920,7 @@ class DiceRollerApp:
             text.insert(tk.END, f"PHASE 4: WARD SAVES vs Normal Damage (Target: {config.ward_target}+) [Defender]\n")
             text.insert(tk.END, f"  Rolled {len(result.ward_roll.dice)} dice (failed saves)\n")
             if len(result.ward_roll.dice) <= 30 and len(result.ward_roll.dice) > 0:
-                text.insert(tk.END, f"  Rolls: {list(result.ward_roll.dice)}\n")
+                text.insert(tk.END, f"  Rolls: {result.ward_roll.dice.tolist()}\n")
             text.insert(tk.END, f"  Successful Wards: {result.ward_roll.num_successes}\n")
             text.insert(tk.END, f"  Failed Wards: {result.ward_roll.num_failures}\n")
             text.insert(tk.END, "\n")
@@ -905,7 +932,7 @@ class DiceRollerApp:
                 text.insert(tk.END, f"  Ward saves vs Mortal Wounds (Target: {config.ward_target}+)\n")
                 text.insert(tk.END, f"  Rolled {len(result.mortal_ward_roll.dice)} dice\n")
                 if len(result.mortal_ward_roll.dice) <= 30:
-                    text.insert(tk.END, f"  Rolls: {list(result.mortal_ward_roll.dice)}\n")
+                    text.insert(tk.END, f"  Rolls: {result.mortal_ward_roll.dice.tolist()}\n")
                 text.insert(tk.END, f"  Successful Wards: {result.mortal_ward_roll.num_successes}\n")
                 text.insert(tk.END, f"  Failed Wards: {result.mortal_ward_roll.num_failures}\n")
             text.insert(tk.END, f"  Final Mortal Wounds: {result.mortal_wounds}\n")
