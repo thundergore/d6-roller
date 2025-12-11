@@ -128,6 +128,7 @@ class CombatConfig:
     hit_reroll_ones: bool = False
     hit_reroll_fails: bool = False
     hit_crit_value: int = 6
+    hit_crits_2_hits: bool = False  # Crits count as 2 hits
     hit_auto_wound_on_crit: bool = False
     hit_mortal_wounds_on_crit: bool = False
     hit_mortals_continue: bool = False
@@ -285,6 +286,16 @@ class CombatResolver:
         prob_natural_crit = max(0, (7 - config.hit_crit_value) / 6)
         mortal_wound_damage = 0
         normal_hit_prob = hit_prob
+        crit_bonus_hits = 0  # Extra hits from crits
+
+        # Handle crits as 2 hits (must be processed first)
+        if config.hit_crits_2_hits and not config.hit_mortal_wounds_on_crit and not config.hit_auto_wound_on_crit:
+            # Each crit that hits generates 1 additional hit
+            # Probability of rolling a crit value (e.g., 6): 1/6 or (7 - crit_value) / 6
+            # Probability that a crit hits: always 1 (if crit_value >= target, which it usually is)
+            if config.hit_crit_value >= config.hit_target - config.hit_modifier:
+                crit_bonus_hits = prob_natural_crit * expected_attacks
+            # These bonus hits go through normal wound/save/ward sequence
 
         if config.hit_mortal_wounds_on_crit:
             prob_crit_hits = prob_natural_crit
@@ -362,7 +373,10 @@ class CombatResolver:
         else:
             expected_normal_damage = expected_attacks * normal_hit_prob * wound_prob * save_fail_prob * ward_fail_prob * expected_damage_per_hit
 
-        expected_total = expected_normal_damage + mortal_wound_damage + wound_mortal_damage
+        # Add bonus damage from crits (these go through normal wound/save/ward)
+        crit_bonus_damage = crit_bonus_hits * wound_prob * save_fail_prob * ward_fail_prob * expected_damage_per_hit
+
+        expected_total = expected_normal_damage + crit_bonus_damage + mortal_wound_damage + wound_mortal_damage
         return round(expected_total, 2)
 
     def resolve_combat(self, config: CombatConfig) -> CombatResult:
@@ -382,8 +396,13 @@ class CombatResolver:
         auto_wound_count = 0
         normal_hits = hit_roll.num_successes
 
-        if (config.hit_auto_wound_on_crit or config.hit_mortal_wounds_on_crit) and len(hit_roll.successes) > 0:
+        if len(hit_roll.successes) > 0:
             natural_crits_that_hit = np.sum(hit_roll.successes >= config.hit_crit_value)
+
+            # Handle crits as 2 hits (must be processed first, before other crit effects)
+            if config.hit_crits_2_hits:
+                # Each crit generates an additional hit
+                normal_hits += natural_crits_that_hit
 
             if config.hit_mortal_wounds_on_crit:
                 mortal_wound_count = natural_crits_that_hit
@@ -609,6 +628,9 @@ def render_weapon_config(weapon_num: int) -> CombatConfig:
     with col2:
         st.write("")  # spacing
 
+    hit_crits_2_hits = st.checkbox(f"{hit_crit_value}+ count as 2 hits (crits)",
+                                   key=f"hit_crits_2hits{key_suffix}")
+
     col1, col2 = st.columns(2)
     with col1:
         hit_auto_wound = st.checkbox(f"{hit_crit_value}+ auto-wound (skip wound roll)",
@@ -670,6 +692,7 @@ def render_weapon_config(weapon_num: int) -> CombatConfig:
         hit_reroll_ones=hit_reroll_ones,
         hit_reroll_fails=hit_reroll_fails,
         hit_crit_value=hit_crit_value,
+        hit_crits_2_hits=hit_crits_2_hits,
         hit_auto_wound_on_crit=hit_auto_wound,
         hit_mortal_wounds_on_crit=hit_mortals,
         hit_mortals_continue=hit_mortals_continue,
@@ -1007,6 +1030,8 @@ def main():
                         st.write("- Reroll 1s enabled")
                     if config.hit_reroll_fails:
                         st.write("- Reroll all fails enabled")
+                    if config.hit_crits_2_hits:
+                        st.write(f"- {config.hit_crit_value}+ count as 2 hits (crits)")
                     if config.hit_auto_wound_on_crit:
                         st.write(f"- {config.hit_crit_value}+ auto-wound")
                     if config.hit_mortal_wounds_on_crit:
@@ -1023,7 +1048,7 @@ def main():
                         st.metric("Failures", result.hit_roll.num_failures)
 
                     if len(result.hit_roll.dice) <= 30:
-                        st.code(str(list(result.hit_roll.dice)))
+                        st.code(str(result.hit_roll.dice.tolist()))
 
                 with st.expander(f"PHASE 2: TO WOUND ({config.wound_target}+)"):
                     if config.wound_reroll_ones:
@@ -1042,7 +1067,7 @@ def main():
                         st.metric("Failures", result.wound_roll.num_failures)
 
                     if len(result.wound_roll.dice) <= 30 and len(result.wound_roll.dice) > 0:
-                        st.code(str(list(result.wound_roll.dice)))
+                        st.code(str(result.wound_roll.dice.tolist()))
 
                 with st.expander(f"PHASE 3: SAVES ({config.save_target}+) [Defender]"):
                     col1, col2, col3 = st.columns(3)
@@ -1054,7 +1079,7 @@ def main():
                         st.metric("Failed Saves", result.save_roll.num_failures)
 
                     if len(result.save_roll.dice) <= 30 and len(result.save_roll.dice) > 0:
-                        st.code(str(list(result.save_roll.dice)))
+                        st.code(str(result.save_roll.dice.tolist()))
 
                     # Show damage rolls if variable damage
                     if result.normal_damage_rolls and isinstance(config.damage, str):
@@ -1078,7 +1103,7 @@ def main():
                             st.metric("Damage Taken", result.ward_roll.num_failures)
 
                         if len(result.ward_roll.dice) <= 30:
-                            st.code(str(list(result.ward_roll.dice)))
+                            st.code(str(result.ward_roll.dice.tolist()))
 
                 if result.mortal_wounds > 0:
                     with st.expander("MORTAL WOUNDS"):
